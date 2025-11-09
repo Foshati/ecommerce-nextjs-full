@@ -1,9 +1,8 @@
 import NextAuth, { DefaultSession } from 'next-auth'
 import { PrismaClient } from '@prisma/client'
 import authConfig from './auth.config'
-import bcrypt from 'bcryptjs'
-import Credentials from 'next-auth/providers/credentials'
-import { User } from '@prisma/client'
+import Google from 'next-auth/providers/google'
+import GitHub from 'next-auth/providers/github'
 
 const prisma = new PrismaClient()
 
@@ -21,53 +20,47 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: 'jwt' },
   ...authConfig,
   pages: {
-    // signIn: '/auth/signin',
-    // error: '/auth/error',
+    signIn: '/signin',
   },
   providers: [
-    Credentials({
-      name: 'credentials',
-      credentials: {
-        email: { label: 'Email', type: 'email' },
-        password: { label: 'Password', type: 'password' },
-      },
-      async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          return null
-        }
-
-        const email = credentials.email as string
-        const password = credentials.password as string
-
-        const user = await prisma.user.findUnique({
-          where: { email },
-        })
-
-        if (!user || !user.password) {
-          return null
-        }
-
-        const isPasswordValid = await bcrypt.compare(password, user.password)
-
-        if (!isPasswordValid) {
-          return null
-        }
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          image: user.image,
-          role: user.role,
-        }
-      },
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    }),
+    GitHub({
+      clientId: process.env.GITHUB_CLIENT_ID!,
+      clientSecret: process.env.GITHUB_CLIENT_SECRET!,
     }),
   ],
   callbacks: {
+    async signIn({ user, account }) {
+      if (account?.provider === 'google' || account?.provider === 'github') {
+        const existingUser = await prisma.user.findUnique({
+          where: { email: user.email! },
+        })
+        
+        if (!existingUser) {
+          await prisma.user.create({
+            data: {
+              email: user.email!,
+              name: user.name,
+              image: user.image,
+              role: 'USER',
+            },
+          })
+        }
+      }
+      return true
+    },
     async jwt({ token, user }) {
       if (user) {
-        token.role = (user as User).role
-        token.id = user.id
+        const dbUser = await prisma.user.findUnique({
+          where: { email: user.email! },
+        })
+        if (dbUser) {
+          token.role = dbUser.role
+          token.id = dbUser.id
+        }
       }
       return token
     },
